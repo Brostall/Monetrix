@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import Footer from '../components/Footer'
 import Topbar from '../components/Topbar'
+import { login, registerBusiness, registerIndividual } from '../lib/api'
+import { getToken, saveToken } from '../lib/authStorage'
 
 type AuthMode = 'login' | 'register'
 type UserType = 'individual' | 'business'
@@ -36,6 +38,12 @@ type FieldConfig = {
   placeholder?: string
   autoComplete?: string
 }
+
+const BANK_CLIENT_OPTIONS = Array.from({ length: 10 }, (_, index) => {
+  const suffix = index + 1
+  const value = `team217-${suffix}`
+  return { value, label: `${value} (клиент ${suffix})` }
+})
 
 const getFieldConfig = (mode: AuthMode, userType: UserType): FieldConfig[] => {
   if (mode === 'login') {
@@ -72,16 +80,64 @@ const getFieldConfig = (mode: AuthMode, userType: UserType): FieldConfig[] => {
 
 const AuthPage = ({ mode }: { mode: AuthMode }) => {
   const [userType, setUserType] = useState<UserType>('individual')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
+
+  useEffect(() => {
+    const existingToken = getToken()
+    if (existingToken) {
+      navigate('/client', { replace: true })
+    }
+  }, [navigate])
 
   const fields = useMemo(() => getFieldConfig(mode, userType), [mode, userType])
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    setError(null)
     const formData = new FormData(event.currentTarget)
-    // eslint-disable-next-line no-console
-    console.table(Object.fromEntries(formData.entries()))
-    navigate('/client')
+    const bankClientId = formData.get('bankClientId')?.toString() || undefined
+
+    try {
+      setLoading(true)
+
+      if (mode === 'register') {
+        const password = formData.get('password')?.toString() ?? ''
+        const confirm = formData.get('confirm')?.toString() ?? ''
+        if (password !== confirm) {
+          throw new Error('Пароли не совпадают')
+        }
+
+        const email = formData.get('email')?.toString() ?? ''
+        if (userType === 'business') {
+          const companyName = formData.get('companyName')?.toString() ?? ''
+          const inn = formData.get('inn')?.toString() ?? ''
+          const contact = formData.get('contact')?.toString() ?? ''
+          const response = await registerBusiness({ companyName, inn, contact, email, password, bankClientId })
+          saveToken(response.accessToken)
+        } else {
+          const fullName = formData.get('fullName')?.toString() ?? ''
+          const response = await registerIndividual({ fullName, email, password, bankClientId })
+          saveToken(response.accessToken)
+        }
+      } else {
+        const email = formData.get('email')?.toString() ?? ''
+        const password = formData.get('password')?.toString() ?? ''
+        const response = await login({ userType, email, password })
+        saveToken(response.accessToken)
+      }
+
+      navigate('/client', { replace: true })
+    } catch (apiError) {
+      if (apiError instanceof Error) {
+        setError(apiError.message)
+      } else {
+        setError('Не удалось выполнить запрос. Попробуйте ещё раз.')
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -144,6 +200,22 @@ const AuthPage = ({ mode }: { mode: AuthMode }) => {
                 </label>
               ))}
 
+              {mode === 'register' && (
+                <label className="form-field">
+                  <span className="form-label">Клиент OpenBanking</span>
+                  <select className="form-input" name="bankClientId" defaultValue={BANK_CLIENT_OPTIONS[0]?.value} required>
+                    {BANK_CLIENT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="form-hint">Выберите одного из тестовых клиентов, выданных организаторами.</span>
+                </label>
+              )}
+
+              {error && <p className="form-error" role="alert">{error}</p>}
+
               {mode === 'login' ? (
                 <div className="form-meta">
                   <label className="checkbox-field">
@@ -164,8 +236,8 @@ const AuthPage = ({ mode }: { mode: AuthMode }) => {
                 </p>
               )}
 
-              <button type="submit" className="btn primary-btn auth-submit">
-                {mode === 'login' ? 'Войти в Monetrix' : 'Создать аккаунт'}
+              <button type="submit" className="btn primary-btn auth-submit" disabled={loading}>
+                {loading ? 'Подождите...' : mode === 'login' ? 'Войти в Monetrix' : 'Создать аккаунт'}
               </button>
             </form>
 

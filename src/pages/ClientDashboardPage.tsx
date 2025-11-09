@@ -1,167 +1,302 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Footer from '../components/Footer'
 import Topbar from '../components/Topbar'
+import { fetchProfile, fetchRecommendations, fetchSummary, fetchTransactions } from '../lib/api'
+import type { RecommendationsResponse } from '../lib/api'
+import { ApiError } from '../lib/api'
+import { clearToken, getToken } from '../lib/authStorage'
+import { formatCurrency, formatDate, formatSignedCurrency } from '../lib/format'
 
-type BankAccount = {
+type AggregatedAccount = {
   id: string
   bank: string
   type: string
-  balance: string
-  trend: string
+  balanceValue: number
+  balanceText: string
 }
 
-type Bank = {
+type AggregatedBank = {
+  code: string
   name: string
-  totalBalance: string
-  accounts: BankAccount[]
+  totalBalance: number
+  totalBalanceText: string
+  accounts: AggregatedAccount[]
 }
 
-const profile = {
-  name: 'Иван Иванов',
-  tier: 'Grow',
-  email: 'ivan@monetrix.app',
-  phone: '+7 999 123-45-67',
+const extractBalance = (account: Record<string, unknown>) => {
+  const balanceField = account.balance ?? account.amount ?? 0
+  if (typeof balanceField === 'number') return balanceField
+  if (typeof balanceField === 'string') {
+    const parsed = parseFloat(balanceField)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  if (typeof balanceField === 'object' && balanceField !== null) {
+    const value = (balanceField as Record<string, unknown>).amount ?? (balanceField as Record<string, unknown>).value
+    if (typeof value === 'number') return value
+    if (typeof value === 'string') return parseFloat(value)
+  }
+  return 0
 }
 
-const banks: Bank[] = [
-  {
-    name: 'СБЕР',
-    totalBalance: '1 240 500 ₽',
-    accounts: [
-      { id: 'acc-1', bank: 'СБЕР', type: 'Расчетный счёт', balance: '850 000 ₽', trend: '+4.6%' },
-      { id: 'acc-2', bank: 'СБЕР', type: 'Зарплатная карта', balance: '390 500 ₽', trend: '+2.1%' },
-    ],
-  },
-  {
-    name: 'Т‑Банк',
-    totalBalance: '820 300 ₽',
-    accounts: [
-      { id: 'acc-3', bank: 'Т‑Банк', type: 'Инвестиции', balance: '620 300 ₽', trend: '+12.1%' },
-      { id: 'acc-4', bank: 'Т‑Банк', type: 'Накопительный счёт', balance: '200 000 ₽', trend: '+3.2%' },
-    ],
-  },
-  {
-    name: 'Альфа-Банк',
-    totalBalance: '−45 800 ₽',
-    accounts: [
-      { id: 'acc-5', bank: 'Альфа-Банк', type: 'Кредит', balance: '−45 800 ₽', trend: '−1.8%' },
-    ],
-  },
-]
+const getAccountName = (account: Record<string, unknown>) => {
+  return (
+    (account.name as string) ||
+    (account.accountType as string) ||
+    (account.type as string) ||
+    (account.productType as string) ||
+    'Счёт'
+  )
+}
 
-const moneyFlow = [
-  { month: 'Окт', income: 420000, outcome: 285000 },
-  { month: 'Ноя', income: 448000, outcome: 301500 },
-  { month: 'Дек', income: 472000, outcome: 318400 },
-]
+const getAccountId = (account: Record<string, unknown>, index: number) => {
+  return (
+    (account.id as string) ||
+    (account.accountId as string) ||
+    (account.number as string) ||
+    String(index)
+  )
+}
 
-const recommendations = [
-  {
-    id: 'rec-1',
-    title: 'Оптимизируйте расходы на сервисы',
-    description: 'Предложите миграцию на годовую подписку — экономия 18 400 ₽ в год.',
-    category: 'Бюджеты',
-  },
-  {
-    id: 'rec-2',
-    title: 'Инвестируйте излишки ликвидности',
-    description: 'Доступен вклад под 14,2% годовых с налоговым вычетом и страхованием до 1,4 млн ₽.',
-    category: 'Инвестиции',
-  },
-  {
-    id: 'rec-3',
-    title: 'Закройте кредит досрочно',
-    description: 'Единовременный платёж 45 800 ₽ сэкономит 11 200 ₽ процентов за 6 месяцев.',
-    category: 'Долговая нагрузка',
-  },
-]
+const aggregateBanks = (accounts: Array<Record<string, unknown>> | undefined): AggregatedBank[] => {
+  if (!accounts) return []
+  const groups = new Map<string, AggregatedBank>()
 
-const activities = [
-  {
-    id: 'act-1',
-    time: 'Сегодня, 12:24',
-    text: 'Получено новое соглашение через ГОСТ-шлюз · Т‑Банк · Срок до 30.07.2025',
-  },
-  {
-    id: 'act-2',
-    time: 'Вчера, 19:05',
-    text: 'Категоризация 128 транзакций завершена · Точность 92%',
-  },
-  {
-    id: 'act-3',
-    time: '27 окт, 15:40',
-    text: 'Экспорт отчёта за Q3 отправлен на электронную почту клиента',
-  },
-]
+  accounts.forEach((account, index) => {
+    const bankCode = (account.bank as string) || 'unknown'
+    const bankName = (account.bankLabel as string) || (account.bankName as string) || bankCode.toUpperCase()
+    const balanceValue = extractBalance(account)
+    const accountData: AggregatedAccount = {
+      id: getAccountId(account, index),
+      bank: bankName,
+      type: getAccountName(account),
+      balanceValue,
+      balanceText: formatCurrency(balanceValue),
+    }
 
-const goals = [
-  { id: 'goal-1', title: 'Резерв на развитие', target: '900 000 ₽', progress: 0.62 },
-  { id: 'goal-2', title: 'Подушка безопасности', target: '6 мес. расходов', progress: 0.8 },
-  { id: 'goal-3', title: 'Погашение кредита', target: '45 800 ₽', progress: 0.3 },
-]
+    if (!groups.has(bankCode)) {
+      groups.set(bankCode, {
+        code: bankCode,
+        name: bankName,
+        totalBalance: 0,
+        totalBalanceText: formatCurrency(0),
+        accounts: [],
+      })
+    }
 
-const categories = [
-  { id: 'cat-1', title: 'Операционные расходы', value: 128000, planned: 140000 },
-  { id: 'cat-2', title: 'Маркетинг', value: 54000, planned: 50000 },
-  { id: 'cat-3', title: 'Развитие продукта', value: 76000, planned: 80000 },
-]
+    const entry = groups.get(bankCode)!
+    entry.totalBalance += balanceValue
+    entry.accounts.push(accountData)
+    entry.totalBalanceText = formatCurrency(entry.totalBalance)
+  })
 
-const transactions = [
-  { id: 'tx-1', date: '28 окт, 14:23', bank: 'СБЕР', account: 'Расчетный счёт', type: 'Списание', amount: '-28 500 ₽', description: 'Оплата услуг хостинга' },
-  { id: 'tx-2', date: '28 окт, 11:15', bank: 'Т‑Банк', account: 'Инвестиции', type: 'Пополнение', amount: '+15 300 ₽', description: 'Дивиденды по акциям' },
-  { id: 'tx-3', date: '27 окт, 18:42', bank: 'СБЕР', account: 'Зарплатная карта', type: 'Списание', amount: '-3 200 ₽', description: 'Оплата в ресторане' },
-  { id: 'tx-4', date: '27 окт, 10:00', bank: 'Альфа-Банк', account: 'Кредит', type: 'Списание', amount: '-12 000 ₽', description: 'Ежемесячный платёж' },
-  { id: 'tx-5', date: '26 окт, 16:30', bank: 'Т‑Банк', account: 'Накопительный счёт', type: 'Пополнение', amount: '+50 000 ₽', description: 'Перевод с расчётного счёта' },
-  { id: 'tx-6', date: '25 окт, 09:15', bank: 'СБЕР', account: 'Расчетный счёт', type: 'Пополнение', amount: '+420 000 ₽', description: 'Оплата от клиента' },
-]
+  return Array.from(groups.values())
+}
+
+const buildMoneyFlow = (transactions: Array<Record<string, unknown>>) => {
+  const buckets = new Map<string, { income: number; outcome: number }>()
+
+  transactions.forEach((tx) => {
+    const dateRaw = (tx.date as string) || (tx.transactionDate as string)
+    if (!dateRaw) return
+    const date = new Date(dateRaw)
+    if (Number.isNaN(date.getTime())) return
+    const key = `${date.getFullYear()}-${date.getMonth()}`
+    if (!buckets.has(key)) {
+      buckets.set(key, { income: 0, outcome: 0 })
+    }
+    const bucket = buckets.get(key)!
+    const amount = Number(tx.amount ?? tx.transactionAmount ?? 0)
+    if (Number.isFinite(amount) && amount !== 0) {
+      if (amount >= 0) bucket.income += amount
+      else bucket.outcome += Math.abs(amount)
+    }
+  })
+
+  const sortedKeys = Array.from(buckets.keys()).sort((a, b) => (a > b ? 1 : -1)).slice(-3)
+  return sortedKeys.map((key) => {
+    const [year, month] = key.split('-')
+    const label = new Date(Number(year), Number(month), 1).toLocaleDateString('ru-RU', { month: 'short' })
+    const bucket = buckets.get(key)!
+    return {
+      month: label,
+      income: Math.round(bucket.income),
+      outcome: Math.round(bucket.outcome),
+    }
+  })
+}
 
 const ClientDashboardPage = () => {
-  const [selectedBank, setSelectedBank] = useState<Bank | null>(null)
+  const navigate = useNavigate()
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [profile, setProfile] = useState<{ fullName?: string; companyName?: string; bankClientId?: string; email?: string } | null>(null)
+  const [consents, setConsents] = useState<Array<{ bank: string; bankLabel?: string; status: string; clientId: string }>>([])
+  const [summary, setSummary] = useState<{ netWorth: number; assets: number; liabilities: number; cashflow: { next30days: number; trend: number }; budgets: Array<{ category: string; limit: number; actual: number; percentage?: number }>; accounts?: Array<Record<string, unknown>> } | null>(null)
+  const [transactions, setTransactions] = useState<Array<Record<string, unknown>>>([])
+  const [recommendations, setRecommendations] = useState<RecommendationsResponse>([])
+  const [selectedBank, setSelectedBank] = useState<AggregatedBank | null>(null)
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setLoading(true)
+        const token = getToken()
+        if (!token) {
+          navigate('/login', { replace: true })
+          return
+        }
+        const [profileData, summaryData, transactionsData, recommendationsData] = await Promise.all([
+          fetchProfile(token),
+          fetchSummary(token),
+          fetchTransactions(token),
+          fetchRecommendations(token),
+        ])
+
+        setProfile(profileData.user)
+        setConsents(profileData.consents)
+        setSummary(summaryData)
+        setTransactions(transactionsData.items)
+        setRecommendations(recommendationsData)
+      } catch (apiError) {
+        if (apiError instanceof ApiError && apiError.status === 401) {
+          clearToken()
+          setError('Сессия истекла. Пожалуйста, войдите заново.')
+        } else if (apiError instanceof Error) {
+          setError(apiError.message)
+        } else {
+          setError('Не удалось загрузить данные. Попробуйте позже.')
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    load()
+  }, [navigate])
+
+  const banks = useMemo(() => aggregateBanks(summary?.accounts), [summary])
+  const moneyFlow = useMemo(() => buildMoneyFlow(transactions), [transactions])
+
+  const handleRetry = () => {
+    setError(null)
+    setLoading(true)
+    // trigger effect again by navigating to same route
+    navigate(0)
+  }
+
+  const handleForceLogout = () => {
+    clearToken()
+    navigate('/login', { replace: true })
+  }
+
+  if (loading) {
+    return (
+      <div className="app-shell">
+        <Topbar />
+        <main className="client-main">
+          <div className="loading-state">Загрузка данных...</div>
+        </main>
+        <Footer />
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="app-shell">
+        <Topbar />
+        <main className="client-main">
+          <div className="error-state">
+            <p>{error}</p>
+            <button type="button" className="btn primary-btn" onClick={handleRetry}>
+              Повторить запрос
+            </button>
+            <button type="button" className="btn ghost-btn" onClick={handleForceLogout}>
+              Выйти
+            </button>
+          </div>
+        </main>
+        <Footer />
+      </div>
+    )
+  }
+
+  const displayName = profile?.fullName || profile?.companyName || 'Пользователь'
+
+  const budgets = summary?.budgets ?? []
+  const goals = budgets.slice(0, 3).map((budget, index) => ({
+    id: `goal-${budget.category}-${index}`,
+    title: budget.category,
+    target: formatCurrency(budget.limit),
+    progress: budget.limit ? budget.actual / budget.limit : 0,
+  }))
+
+  const activities = consents.map((consent, index) => ({
+    id: `cn-${consent.bank}-${index}`,
+    time: consent.clientId,
+    text: `${consent.bankLabel || consent.bank.toUpperCase()}: статус — ${consent.status}`,
+  }))
+
+  const formattedTransactions = transactions.slice(0, 50).map((tx, index) => {
+    const amount = Number(tx.amount ?? tx.transactionAmount ?? 0)
+    const bankLabel = (tx.bankLabel as string) || (tx.bank as string) || 'Банк'
+    const accountName = getAccountName(tx)
+    return {
+      id: `tx-${index}`,
+      date: formatDate((tx.date as string) || (tx.transactionDate as string) || ''),
+      bank: bankLabel,
+      account: accountName,
+      type: amount >= 0 ? 'Пополнение' : 'Списание',
+      amount,
+      description: (tx.description as string) || (tx.reference as string) || '—',
+    }
+  })
 
   return (
     <div className="app-shell">
-      <Topbar />
+      <Topbar onLogout={handleForceLogout} />
       <main className="client-main">
         <div className="container client-grid">
           <section className="client-sidebar">
             <article className="client-card">
               <div className="client-avatar" aria-hidden>
-                <span>И</span>
+                <span>{displayName.charAt(0)}</span>
               </div>
               <div className="client-card-header">
                 <div>
-                  <h1>{profile.name}</h1>
+                  <h1>{displayName}</h1>
                 </div>
-                <span className="client-tier">Тариф {profile.tier}</span>
+                <span className="client-tier">ID банка: {profile?.bankClientId || '—'}</span>
               </div>
               <dl className="client-details">
                 <div>
-                  <dt>Телефон</dt>
-                  <dd>{profile.phone}</dd>
+                  <dt>E-mail</dt>
+                  <dd>{profile?.email || '—'}</dd>
                 </div>
                 <div>
-                  <dt>E-mail</dt>
-                  <dd>{profile.email}</dd>
+                  <dt>Тип пользователя</dt>
+                  <dd>{profile?.companyName ? 'Бизнес' : 'Физическое лицо'}</dd>
                 </div>
               </dl>
             </article>
 
             <article className="score-card">
-              <h2>Финансовое здоровье</h2>
-              <div className="score-value">78</div>
-              <p className="score-caption">Из 100 — стабильная ликвидность, рекомендуем усилить резерв на развитие.</p>
+              <h2>Показатели</h2>
+              <div className="score-value">{Math.round((summary?.assets || 0) / 1000)}</div>
+              <p className="score-caption">Assets · Liabilities · Cashflow</p>
               <ul className="score-list">
                 <li>
-                  <span>Доля долгов</span>
-                  <strong>18%</strong>
+                  <span>Активы</span>
+                  <strong>{formatCurrency(summary?.assets || 0)}</strong>
                 </li>
                 <li>
-                  <span>Коэффициент ликвидности</span>
-                  <strong>1.4</strong>
+                  <span>Обязательства</span>
+                  <strong>{formatCurrency(summary?.liabilities || 0)}</strong>
                 </li>
                 <li>
-                  <span>Исполнение бюджета</span>
-                  <strong>92%</strong>
+                  <span>Денежный поток</span>
+                  <strong>{formatCurrency(summary?.cashflow.next30days || 0)}</strong>
                 </li>
               </ul>
             </article>
@@ -174,15 +309,16 @@ const ClientDashboardPage = () => {
                     <div className="goal-row">
                       <div>
                         <span className="goal-title">{goal.title}</span>
-                        <span className="goal-target">Цель: {goal.target}</span>
+                        <span className="goal-target">Лимит: {goal.target}</span>
                       </div>
-                      <span className="goal-progress">{Math.round(goal.progress * 100)}%</span>
+                      <span className="goal-progress">{Math.min(100, Math.round(goal.progress * 100))}%</span>
                     </div>
                     <div className="goal-bar">
-                      <span style={{ width: `${goal.progress * 100}%` }} />
+                      <span style={{ width: `${Math.min(goal.progress * 100, 100)}%` }} />
                     </div>
                   </li>
                 ))}
+                {goals.length === 0 && <p className="muted">Бюджеты отсутствуют</p>}
               </ul>
             </article>
           </section>
@@ -190,18 +326,18 @@ const ClientDashboardPage = () => {
           <section className="client-content">
             <header className="client-header">
               <div>
-                <h2>Добро пожаловать, {profile.name.split(' ')[0]}</h2>
-                <p>3243 транзакции синхронизированы · Последнее обновление 5 минут назад</p>
+                <h2>Добро пожаловать, {displayName.split(' ')[0]}</h2>
+                <p>Согласий активных: {consents.filter((c) => c.status === 'active').length}</p>
               </div>
               <div className="client-header-metrics">
                 <article>
                   <span>Чистая стоимость</span>
-                  <strong>2 324 000 ₽</strong>
-                  <small>+18% за 3 месяца</small>
+                  <strong>{formatCurrency(summary?.netWorth || 0)}</strong>
+                  <small>Все активы минус обязательства</small>
                 </article>
                 <article>
                   <span>Свободный денежный поток</span>
-                  <strong>135 600 ₽</strong>
+                  <strong>{formatCurrency(summary?.cashflow.next30days || 0)}</strong>
                   <small>На ближайшие 30 дней</small>
                 </article>
               </div>
@@ -211,33 +347,35 @@ const ClientDashboardPage = () => {
               <article className="accounts-card">
                 <header>
                   <h3>Счета и продукты</h3>
-                  <span>3 банка подключено</span>
+                  <span>{banks.length} банка подключено</span>
                 </header>
                 <ul>
                   {banks.map((bank) => (
-                    <li key={bank.name} className="bank-item" onClick={() => setSelectedBank(bank)}>
+                    <li key={bank.code} className="bank-item" onClick={() => setSelectedBank(bank)}>
                       <div>
                         <span className="account-bank">{bank.name}</span>
                       </div>
                       <div className="account-stats">
-                        <strong>{bank.totalBalance}</strong>
+                        <strong>{bank.totalBalanceText}</strong>
                       </div>
                     </li>
                   ))}
+                  {banks.length === 0 && <li className="muted">Нет подключенных счетов</li>}
                 </ul>
               </article>
 
               <article className="cashflow-card">
                 <header>
                   <h3>Прогноз денежного потока</h3>
-                  <span>Динамика 90 дней</span>
+                  <span>Последние месяцы</span>
                 </header>
                 <div className="cashflow-chart">
+                  {moneyFlow.length === 0 && <p className="muted">Недостаточно данных для прогноза</p>}
                   {moneyFlow.map((item) => (
                     <div className="cashflow-column" key={item.month}>
                       <div className="cashflow-bars">
-                        <span className="cashflow-income" style={{ height: `${item.income / 6000}px` }} />
-                        <span className="cashflow-outcome" style={{ height: `${item.outcome / 6000}px` }} />
+                        <span className="cashflow-income" style={{ height: `${item.income / 2000}px` }} />
+                        <span className="cashflow-outcome" style={{ height: `${item.outcome / 2000}px` }} />
                       </div>
                       <span className="cashflow-label">{item.month}</span>
                     </div>
@@ -256,23 +394,24 @@ const ClientDashboardPage = () => {
                 <span>Контроль лимитов</span>
               </header>
               <ul>
-                {categories.map((category) => (
-                  <li key={category.id}>
+                {budgets.map((category, index) => (
+                  <li key={`${category.category}-${index}`}>
                     <div>
-                      <span className="category-title">{category.title}</span>
-                      <span className="category-plan">План: {category.planned.toLocaleString('ru-RU')} ₽</span>
+                      <span className="category-title">{category.category}</span>
+                      <span className="category-plan">План: {formatCurrency(category.limit)}</span>
                     </div>
                     <div className="category-stats">
-                      <strong>{category.value.toLocaleString('ru-RU')} ₽</strong>
-                      <span className={`category-trend${category.value > category.planned ? ' warn' : ''}`}>
-                        {category.value > category.planned ? '+ превышение' : 'в пределах'}
+                      <strong>{formatCurrency(category.actual)}</strong>
+                      <span className={`category-trend${category.actual > category.limit ? ' warn' : ''}`}>
+                        {category.actual > category.limit ? '+ превышение' : 'в пределах'}
                       </span>
                     </div>
                     <div className="category-bar">
-                      <span style={{ width: `${Math.min((category.value / category.planned) * 100, 100)}%` }} />
+                      <span style={{ width: `${Math.min((category.actual / category.limit) * 100, 100)}%` }} />
                     </div>
                   </li>
                 ))}
+                {budgets.length === 0 && <p className="muted">Нет данных по бюджетам</p>}
               </ul>
             </div>
 
@@ -286,15 +425,13 @@ const ClientDashboardPage = () => {
                   {recommendations.map((rec) => (
                     <li key={rec.id}>
                       <div>
-                        <span className="recommendation-category">{rec.category}</span>
+                        <span className="recommendation-category">{rec.type || rec.category || 'Совет'}</span>
                         <h4>{rec.title}</h4>
-                        <p>{rec.description}</p>
+                        <p>{rec.message}</p>
                       </div>
-                      <button type="button" className="link-button">
-                        Применить
-                      </button>
                     </li>
                   ))}
+                  {recommendations.length === 0 && <li className="muted">Рекомендации не найдены</li>}
                 </ul>
               </article>
 
@@ -310,6 +447,7 @@ const ClientDashboardPage = () => {
                       <p>{activity.text}</p>
                     </li>
                   ))}
+                  {activities.length === 0 && <p className="muted">События отсутствуют</p>}
                 </ul>
               </article>
             </div>
@@ -320,7 +458,7 @@ const ClientDashboardPage = () => {
                 <span>Последние транзакции</span>
               </header>
               <ul>
-                {transactions.map((tx) => (
+                {formattedTransactions.map((tx) => (
                   <li key={tx.id}>
                     <div className="transaction-info">
                       <div>
@@ -328,12 +466,13 @@ const ClientDashboardPage = () => {
                         <span className="transaction-bank">{tx.bank} · {tx.account}</span>
                         <p className="transaction-description">{tx.description}</p>
                       </div>
-                      <div className={`transaction-amount ${tx.type === 'Списание' ? 'negative' : 'positive'}`}>
-                        {tx.amount}
+                      <div className={`transaction-amount ${tx.amount >= 0 ? 'positive' : 'negative'}`}>
+                        {formatSignedCurrency(tx.amount)}
                       </div>
                     </div>
                   </li>
                 ))}
+                {formattedTransactions.length === 0 && <p className="muted">Транзакций нет</p>}
               </ul>
             </article>
           </section>
@@ -358,8 +497,7 @@ const ClientDashboardPage = () => {
                     <span className="account-type">{account.type}</span>
                   </div>
                   <div className="account-stats">
-                    <strong>{account.balance}</strong>
-                    <span className={`account-trend${account.trend.startsWith('-') ? ' negative' : ''}`}>{account.trend}</span>
+                    <strong>{account.balanceText}</strong>
                   </div>
                 </li>
               ))}

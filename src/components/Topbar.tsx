@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { clearToken } from '../lib/authStorage'
 
 const navItems: Array<{ label: string; target: string }> = [
   { label: 'Возможности', target: 'features' },
@@ -8,7 +9,7 @@ const navItems: Array<{ label: string; target: string }> = [
   { label: 'Безопасность', target: 'security' },
 ]
 
-const Topbar = () => {
+const Topbar = ({ onLogout }: { onLogout?: () => void }) => {
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -53,7 +54,12 @@ const Topbar = () => {
               className="btn ghost-btn"
               type="button"
               onClick={() => {
-                navigate('/', { replace: true })
+                clearToken()
+                if (onLogout) {
+                  onLogout()
+                } else {
+                  navigate('/', { replace: true })
+                }
               }}
             >
               Выйти

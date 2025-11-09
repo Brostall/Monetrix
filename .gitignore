@@ -51,3 +51,24 @@ dist-ssr
 
 # documentation
 docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.Python
+*.egg-info/
+.eggs/
+*.log
+.mypy_cache/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Backend build
+backendV2/__pycache__/
+backendV2/**/__pycache__/
+backendV2/**/*.pyc

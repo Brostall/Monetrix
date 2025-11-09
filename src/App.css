@@ -1494,6 +1494,32 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.form-error {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+  color: #f87171;
+}
+
+.muted {
+  color: rgba(148, 163, 184, 0.7);
+  font-size: 0.95rem;
+}
+
+.loading-state,
+.error-state {
+  min-height: 60vh;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  gap: 1rem;
+  color: rgba(226, 232, 240, 0.9);
+}
+
+.error-state p {
+  margin: 0;
+  color: #fca5a5;
+}
+
 @media (max-width: 1024px) {
   .client-grid {
     grid-template-columns: 1fr;
