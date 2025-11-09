@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 async def _create_consents_for_user(bank_client_id: str):
-    """Создает согласия для всех банков в фоне"""
+    """Автоматически создает согласия для всех банков после регистрации"""
     print(f"\n🔄 Начинаю создание согласий для bankClientId: {bank_client_id}")
     client_mapping = resolve_bank_clients(bank_client_id)
     results = []
@@ -51,7 +51,7 @@ async def register(request: RegisterIndividualRequest | RegisterBusinessRequest,
     access = create_token({"sub": user_id, "type": user["userType"]})
     refresh = create_token({"sub": user_id, "type": "refresh"}, expires_minutes=60*24*7)
     
-    # Выводим токен в консоль
+    # Логируем токен для удобства тестирования API
     print("\n" + "="*80)
     print("🔑 НОВЫЙ ПОЛЬЗОВАТЕЛЬ ЗАРЕГИСТРИРОВАН")
     print("="*80)
@@ -62,7 +62,7 @@ async def register(request: RegisterIndividualRequest | RegisterBusinessRequest,
     print(f"{access}")
     print("="*80 + "\n")
     
-    # Создаем согласия в фоне
+    # Создаем согласия асинхронно, чтобы не блокировать ответ
     background_tasks.add_task(_create_consents_for_user, bank_client_id)
     
     return {"accessToken": access, "refreshToken": refresh, "expiresIn": 3600, "user": user}
@@ -74,7 +74,7 @@ async def login(request: LoginRequest) -> Dict:
             access = create_token({"sub": uid, "type": user["userType"]})
             refresh = create_token({"sub": uid, "type": "refresh"}, expires_minutes=60*24*7)
             
-            # Выводим токен в консоль
+            # Логируем токен для удобства тестирования API
             print("\n" + "="*80)
             print("🔐 ПОЛЬЗОВАТЕЛЬ ВОШЕЛ В СИСТЕМУ")
             print("="*80)
