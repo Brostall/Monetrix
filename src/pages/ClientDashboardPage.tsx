@@ -181,7 +181,6 @@ const ClientDashboardPage = () => {
   const handleRetry = () => {
     setError(null)
     setLoading(true)
-    // trigger effect again by navigating to same route
     navigate(0)
   }
 

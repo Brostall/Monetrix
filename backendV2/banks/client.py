@@ -13,13 +13,13 @@ class BankTokenState:
 
 @dataclass
 class BankConsentState:
-    consent_id: Optional[str]  # Может быть None для pending согласий
+    consent_id: Optional[str]
     status: ConsentStatus
     bank_code: str
     client_id: str
     expires_at: Optional[datetime]
     last_synced_at: datetime
-    request_id: Optional[str] = None  # Для SBank pending согласий
+    request_id: Optional[str] = None  # SBank возвращает request_id для pending согласий
 
 bank_tokens: Dict[str, BankTokenState] = {}
 bank_token_locks: Dict[str, asyncio.Lock] = {code: asyncio.Lock() for code in BANK_CONFIGS}
@@ -53,7 +53,6 @@ async def _http_delete(cfg: BankConfig, path: str, *, headers: Optional[Dict[str
         return await client.delete(url, headers=headers, params=params)
 
 async def fetch_bank_token(cfg: BankConfig) -> BankTokenState:
-    # Банки по-разному принимают credentials: одни в query params, другие в JSON body
     params = {
         "client_id": cfg.client_id,
         "client_secret": cfg.client_secret,
@@ -61,11 +60,10 @@ async def fetch_bank_token(cfg: BankConfig) -> BankTokenState:
     
     print(f"    🔑 Получаю токен для {cfg.code} с client_id={cfg.client_id}")
     
-    # Сначала query params (стандарт OpenBanking)
     response = await _http_post(cfg, "/auth/bank-token", params=params)
     
     if response.status_code >= 400:
-        # Fallback на JSON body для банков с нестандартной реализацией
+        # Некоторые банки требуют JSON body вместо query params
         print(f"    ⚠️  Query params не сработали ({response.status_code}), пробую JSON body...")
         response = await _http_post(cfg, "/auth/bank-token", json_payload=params)
         
@@ -144,27 +142,19 @@ async def request_account_consent(cfg: BankConfig, token: str, client_id: str) -
         raise Exception(f"Bank API error: {response.status_code}")
     
     data = response.json()
-    
-    # Полный ответ нужен для отладки из-за разных форматов ответов банков
     print(f"    📄 Полный ответ от {cfg.code}: {data}")
     
-    # Банки возвращают ID согласия в разных полях (consent_id, id, consentId)
     consent_id = (
         data.get("consent_id") or 
         data.get("id") or 
         data.get("consentId")
     )
     
-    # SBank для pending согласий возвращает только request_id
     request_id = data.get("request_id") or data.get("requestId")
-    
     status = _normalize_status(data.get("status"))
     
-    # После одобрения pending согласия банк вернет новый consent_id
     if not consent_id and request_id:
         print(f"    ℹ️  Согласие pending, request_id={request_id}, consent_id будет после одобрения")
-    
-    # Защита от дубликатов при повторных запросах
     existing_key = (cfg.code, client_id)
     existing = bank_consents_by_key.get(existing_key)
     if existing and existing.consent_id == consent_id:
@@ -188,7 +178,6 @@ async def request_account_consent(cfg: BankConfig, token: str, client_id: str) -
 async def fetch_consent_status(cfg: BankConfig, token: str, consent_id: Optional[str], client_id: str, request_id: Optional[str] = None) -> BankConsentState:
     headers = {"Authorization": f"Bearer {token}", "X-Requesting-Bank": TEAM_LOGIN}
     
-    # Для SBank pending согласий используем request_id вместо consent_id
     check_id = consent_id or request_id
     if not check_id:
         return BankConsentState(consent_id=None, status=ConsentStatus.PENDING, bank_code=cfg.code, client_id=client_id, expires_at=None, last_synced_at=datetime.utcnow(), request_id=request_id)
@@ -196,11 +185,9 @@ async def fetch_consent_status(cfg: BankConfig, token: str, consent_id: Optional
     try:
         response = await _http_get(cfg, f"/account-consents/{check_id}", headers=headers)
         if response.status_code >= 400:
-            # Согласие еще не создано или еще pending
             return BankConsentState(consent_id=consent_id, status=ConsentStatus.PENDING, bank_code=cfg.code, client_id=client_id, expires_at=None, last_synced_at=datetime.utcnow(), request_id=request_id)
         data = response.json()
         status = _normalize_status(data.get("status"))
-        # Банк может вернуть другой ID после одобрения pending согласия
         updated_consent_id = data.get("consent_id") or data.get("id") or consent_id
         updated_request_id = data.get("request_id") or request_id
         return BankConsentState(consent_id=updated_consent_id, status=status, bank_code=cfg.code, client_id=client_id, expires_at=None, last_synced_at=datetime.utcnow(), request_id=updated_request_id)
@@ -213,7 +200,6 @@ async def ensure_consent(bank_code: str, client_id: str, token: str, force_new: 
     key = (bank_code, client_id)
     existing = bank_consents_by_key.get(key)
     
-    # Отзываем старое согласие перед созданием нового при force_new
     if force_new and existing and existing.consent_id:
         print(f"    🔄 Отзываю старое согласие {existing.consent_id} для {bank_code}...")
         try:
@@ -224,11 +210,9 @@ async def ensure_consent(bank_code: str, client_id: str, token: str, force_new: 
         except Exception as e:
             print(f"    ⚠️  Не удалось отозвать старое согласие (может быть уже отозвано): {e}")
     
-    # Используем существующее активное согласие, если не требуется новое
     if existing and existing.status == ConsentStatus.ACTIVE and not force_new:
         return existing
     
-    # Не создаем новое согласие, пока старое pending (избегаем дубликатов)
     if existing and existing.status == ConsentStatus.PENDING and not force_new:
         print(f"    ℹ️  Использую существующее pending согласие для {bank_code} (request_id={existing.request_id})")
         return existing
@@ -238,12 +222,10 @@ async def ensure_consent(bank_code: str, client_id: str, token: str, force_new: 
         if existing and existing.status == ConsentStatus.ACTIVE and not force_new:
             return existing
         
-        # Double-check внутри lock для thread-safety
         if existing and existing.status == ConsentStatus.PENDING and not force_new:
             print(f"    ℹ️  Использую существующее pending согласие для {bank_code} (request_id={existing.request_id})")
             return existing
         
-        # Отзываем старое согласие внутри lock перед созданием нового
         if force_new and existing and existing.consent_id:
             print(f"    🔄 Отзываю старое согласие {existing.consent_id} для {bank_code} (внутри lock)...")
             try:
@@ -262,7 +244,6 @@ async def ensure_consent(bank_code: str, client_id: str, token: str, force_new: 
                 bank_consents_by_id[state.consent_id] = state
             return state
         if state.status != ConsentStatus.ACTIVE:
-            # Для SBank pending согласий проверяем статус по request_id
             if not state.consent_id and state.request_id:
                 print(f"    ⏳ Ожидаю активации согласия для {bank_code} (request_id={state.request_id})...")
                 for i in range(40):
@@ -295,7 +276,6 @@ async def revoke_consent_remote(cfg: BankConfig, token: str, consent_id: str) ->
     try:
         await _http_delete(cfg, f"/account-consents/{consent_id}", headers=headers)
     except Exception:
-        # Игнорируем ошибки - согласие может быть уже отозвано или не существовать
         pass
 
 async def fetch_bank_accounts(cfg: BankConfig, token: str, consent: BankConsentState, client_id: str) -> List[Dict[str, Any]]:

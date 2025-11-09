@@ -50,8 +50,7 @@ async def register(request: RegisterIndividualRequest | RegisterBusinessRequest,
     users_db[user_id] = user
     access = create_token({"sub": user_id, "type": user["userType"]})
     refresh = create_token({"sub": user_id, "type": "refresh"}, expires_minutes=60*24*7)
-    
-    # Логируем токен для удобства тестирования API
+    #Логирование для отладки
     print("\n" + "="*80)
     print("🔑 НОВЫЙ ПОЛЬЗОВАТЕЛЬ ЗАРЕГИСТРИРОВАН")
     print("="*80)
@@ -62,7 +61,6 @@ async def register(request: RegisterIndividualRequest | RegisterBusinessRequest,
     print(f"{access}")
     print("="*80 + "\n")
     
-    # Создаем согласия асинхронно, чтобы не блокировать ответ
     background_tasks.add_task(_create_consents_for_user, bank_client_id)
     
     return {"accessToken": access, "refreshToken": refresh, "expiresIn": 3600, "user": user}
@@ -74,7 +72,6 @@ async def login(request: LoginRequest) -> Dict:
             access = create_token({"sub": uid, "type": user["userType"]})
             refresh = create_token({"sub": uid, "type": "refresh"}, expires_minutes=60*24*7)
             
-            # Логируем токен для удобства тестирования API
             print("\n" + "="*80)
             print("🔐 ПОЛЬЗОВАТЕЛЬ ВОШЕЛ В СИСТЕМУ")
             print("="*80)

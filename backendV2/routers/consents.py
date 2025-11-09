@@ -17,7 +17,6 @@ async def create_consent(request: ConsentRequest, current_user = Depends(get_cur
     if not client_id:
         raise HTTPException(status_code=400, detail="Client ID is required")
     token = await ensure_bank_token(bank_code)
-    # Отзываем старое согласие перед созданием нового
     state = await ensure_consent(bank_code, client_id, token, force_new=True)
     return {"consentId": state.consent_id, "status": state.status.value, "bank": bank_code}
 
@@ -25,7 +24,6 @@ async def create_consent(request: ConsentRequest, current_user = Depends(get_cur
 async def status(consent_id: str, current_user = Depends(get_current_user)) -> Dict:
     state = bank_consents_by_id.get(consent_id)
     if not state:
-        # Для SBank pending согласий ищем по request_id
         state = None
         for s in bank_consents_by_key.values():
             if s.request_id == consent_id:
