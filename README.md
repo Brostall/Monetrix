@@ -106,7 +106,7 @@
 ## 📁 Структура проекта
 
 ```
-monetrix-frontend/
+monetrix/
 ├── backendV2/              # FastAPI backend
 │   ├── banks/              # Интеграция с банками
 │   │   ├── client.py       # Клиент для работы с банковскими API
@@ -156,7 +156,7 @@ monetrix-frontend/
 
 ```bash
 git clone <repository-url>
-cd monetrix-frontend
+cd monetrix
 ```
 
 ### 2. Backend (FastAPI)
