@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-TEAM_LOGIN = "team217"
-TEAM_PASSWORD = "YPbqtBmr3GdLOTTGTjXG6veu2MUlc1JJ"
 
 BANK_CLIENT_IDS: List[str] = [f"{TEAM_LOGIN}-{i}" for i in range(1, 11)]
 
