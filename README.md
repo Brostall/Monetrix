@@ -208,14 +208,6 @@ Frontend будет доступен по адресу: `http://localhost:5173`
 
 ## 🔐 Конфигурация
 
-### Банковские учетные данные
-
-Учетные данные команды хранятся в `backendV2/banks/config.py`:
-
-- `TEAM_LOGIN`: `team217`
-- `TEAM_PASSWORD`: `YPbqtBmr3GdLOTTGTjXG6veu2MUlc1JJ`
-- Доступные клиенты: `team217-1` до `team217-10`
-
 ### JWT настройки
 
 Настройки JWT находятся в `backendV2/core/auth.py`:
